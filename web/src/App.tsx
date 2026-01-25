@@ -1,8 +1,11 @@
+import { useState } from 'react';
 import VideoPlayer from './components/VideoPlayer';
 import FileUpload from './components/FileUpload';
 import { MonitorPlay, Shield } from 'lucide-react';
 
 function App() {
+  const [videoUrl, setVideoUrl] = useState<string | undefined>(undefined);
+
   return (
     <div className="max-w-6xl mx-auto px-6 py-12 lg:py-20">
       {/* Header */}
@@ -21,7 +24,7 @@ function App() {
             </div>
             <h2 className="text-2xl font-semibold">Live Preview</h2>
           </div>
-          <VideoPlayer />
+          <VideoPlayer src={videoUrl} />
         </section>
 
         <section>
@@ -31,7 +34,7 @@ function App() {
             </div>
             <h2 className="text-2xl font-semibold">Secure Upload</h2>
           </div>
-          <FileUpload />
+          <FileUpload onUploadSuccess={(url) => setVideoUrl(url)} />
         </section>
       </main>
     </div>
