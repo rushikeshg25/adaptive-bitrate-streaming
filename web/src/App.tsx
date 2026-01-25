@@ -1,6 +1,6 @@
 import VideoPlayer from './components/VideoPlayer';
 import FileUpload from './components/FileUpload';
-import { MonitorPlay, Shield, Zap } from 'lucide-react';
+import { MonitorPlay, Shield } from 'lucide-react';
 
 function App() {
   return (
