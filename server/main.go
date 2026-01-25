@@ -66,6 +66,9 @@ func main() {
 			})
 		}
 
+		//TODO:Process the File here
+		//FFMPEG
+
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 			"message":  "File uploaded successfully",
 			"id":       id,
