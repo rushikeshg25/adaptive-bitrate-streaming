@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { Upload, FileVideo, CheckCircle2, Loader2 } from 'lucide-react';
 
+
 interface FileUploadProps {
     onUploadSuccess?: (url: string) => void;
 }
@@ -14,6 +15,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
     const [isSuccess, setIsSuccess] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [progress, setProgress] = useState(0);
+    const [isProcessing, setIsProcessing] = useState(false);
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
@@ -65,11 +67,15 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
             }
 
             // Complete the upload
+            setIsProcessing(true);
             const response = await axios.post('http://localhost:3000/upload/complete', {
                 uploadId,
                 filename: file.name,
                 total: totalChunks,
+            }, {
+                timeout: 300000 // 5 minutes timeout for transcoding
             });
+
 
             setIsSuccess(true);
             const data = response.data;
@@ -83,7 +89,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
             setError(axios.isAxiosError(err) ? err.response?.data?.error || err.message : 'An unknown error occurred');
         } finally {
             setIsUploading(false);
+            setIsProcessing(false);
         }
+
     };
 
 
@@ -118,12 +126,20 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
                                 />
                             </div>
                             <div className="flex justify-between items-center mb-1">
-                                <h4 className="text-xl font-medium text-white">Uploading...</h4>
-                                <span className="text-blue-500 font-bold">{progress}%</span>
+                                <h4 className="text-xl font-medium text-white">
+                                    {isProcessing ? 'Processing Video...' : 'Uploading...'}
+                                </h4>
+                                {!isProcessing && <span className="text-blue-500 font-bold">{progress}%</span>}
+                                {isProcessing && <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />}
                             </div>
-                            <p className="text-gray-400 text-sm">Transferring video chunks to server</p>
+                            <p className="text-gray-400 text-sm">
+                                {isProcessing
+                                    ? 'Transcoding to multiple qualities (ABR)...'
+                                    : 'Transferring video chunks to server'}
+                            </p>
                         </div>
                     ) : isSuccess ? (
+
                         <>
                             <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mb-4">
                                 <CheckCircle2 className="w-10 h-10 text-green-500" />
