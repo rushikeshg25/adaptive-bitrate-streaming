@@ -1,15 +1,19 @@
 import React, { useState } from 'react';
+import axios from 'axios';
 import { Upload, FileVideo, CheckCircle2, Loader2 } from 'lucide-react';
 
 interface FileUploadProps {
     onUploadSuccess?: (url: string) => void;
 }
 
+const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+
 const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
     const [isDragging, setIsDragging] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [progress, setProgress] = useState(0);
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
@@ -35,35 +39,53 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
         setIsUploading(true);
         setError(null);
         setIsSuccess(false);
+        setProgress(0);
 
-        const formData = new FormData();
-        formData.append('video', file);
+        const uploadId = Math.random().toString(36).substring(7);
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
         try {
-            const response = await fetch('http://localhost:3000/upload', {
-                method: 'POST',
-                body: formData,
-            });
+            for (let i = 0; i < totalChunks; i++) {
+                const start = i * CHUNK_SIZE;
+                const end = Math.min(start + CHUNK_SIZE, file.size);
+                const chunk = file.slice(start, end);
 
-            if (!response.ok) {
-                throw new Error('Upload failed');
+                const formData = new FormData();
+                formData.append('chunk', chunk);
+                formData.append('uploadId', uploadId);
+                formData.append('index', i.toString());
+
+                await axios.post('http://localhost:3000/upload/chunk', formData, {
+                    onUploadProgress: (progressEvent) => {
+                        const chunkProgress = progressEvent.loaded / (progressEvent.total || (end - start));
+                        const totalProgress = Math.round(((i + chunkProgress) / totalChunks) * 100);
+                        setProgress(totalProgress);
+                    },
+                });
             }
 
-            const data = await response.json();
+            // Complete the upload
+            const response = await axios.post('http://localhost:3000/upload/complete', {
+                uploadId,
+                filename: file.name,
+                total: totalChunks,
+            });
+
             setIsSuccess(true);
+            const data = response.data;
 
             if (onUploadSuccess && data.url) {
-                // The URL is relative from the backend, so we need to provide the full path
                 onUploadSuccess(`http://localhost:3000${data.url}`);
             }
 
             setTimeout(() => setIsSuccess(false), 3000);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'An unknown error occurred');
+            setError(axios.isAxiosError(err) ? err.response?.data?.error || err.message : 'An unknown error occurred');
         } finally {
             setIsUploading(false);
         }
     };
+
 
     return (
         <div className="w-full max-w-3xl mx-auto mt-12">
@@ -88,11 +110,19 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
 
                 <div className="flex flex-col items-center text-center p-8">
                     {isUploading ? (
-                        <>
-                            <Loader2 className="w-16 h-16 text-blue-500 animate-spin mb-4" />
-                            <h4 className="text-xl font-medium text-white mb-1">Uploading Video...</h4>
-                            <p className="text-gray-400">Processing on server...</p>
-                        </>
+                        <div className="w-full px-8">
+                            <div className="relative w-full h-2 bg-white/10 rounded-full overflow-hidden mb-4">
+                                <div
+                                    className="absolute top-0 left-0 h-full bg-blue-500 transition-all duration-300 ease-out"
+                                    style={{ width: `${progress}%` }}
+                                />
+                            </div>
+                            <div className="flex justify-between items-center mb-1">
+                                <h4 className="text-xl font-medium text-white">Uploading...</h4>
+                                <span className="text-blue-500 font-bold">{progress}%</span>
+                            </div>
+                            <p className="text-gray-400 text-sm">Transferring video chunks to server</p>
+                        </div>
                     ) : isSuccess ? (
                         <>
                             <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mb-4">
