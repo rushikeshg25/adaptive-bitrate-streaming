@@ -2,12 +2,19 @@ package utils
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 )
 
 func TranscodeToHLS(inputPath string, outputDir string) error {
+	// Ensure variant directories exist for FFmpeg
+	for _, v := range []string{"v0", "v1", "v2"} {
+		os.MkdirAll(filepath.Join(outputDir, v), 0755)
+	}
+
 	// Create original FFmpeg command for ABR HLS
+
 	// We generate 3 qualities: 360p, 480p, 720p
 	cmd := exec.Command("ffmpeg",
 		"-i", inputPath,
