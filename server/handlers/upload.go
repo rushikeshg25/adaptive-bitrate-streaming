@@ -106,13 +106,15 @@ func CompleteUpload(c *fiber.Ctx) error {
 	}
 	finalFile.Close()
 
-	// Transcode to HLS using utility function
-	if err := utils.TranscodeToHLS(tempMP4Path, videoDir); err != nil {
-		log.Printf("Transcoding failed: %v", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Transcoding failed",
-		})
-	}
+	// Transcode to HLS in background
+	go func() {
+		log.Printf("Starting background transcoding for video %s", videoID)
+		if err := utils.TranscodeToHLS(tempMP4Path, videoDir); err != nil {
+			log.Printf("Transcoding failed for video %s: %v", videoID, err)
+			return
+		}
+		log.Printf("Successfully transcoded video %s", videoID)
+	}()
 
 	// Cleanup chunks
 	os.RemoveAll(uploadDir)
