@@ -66,22 +66,22 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
                 });
             }
 
-            // Complete the upload
+            // Start reassembly and background transcoding
             setIsProcessing(true);
             const response = await axios.post('http://localhost:3000/upload/complete', {
                 uploadId,
                 filename: file.name,
                 total: totalChunks,
-            }, {
-                timeout: 300000 // 5 minutes timeout for transcoding
             });
 
+            const { videoID, url } = response.data;
+
+            // Poll for transcoding completion
+            await pollForCompletion(videoID);
 
             setIsSuccess(true);
-            const data = response.data;
-
-            if (onUploadSuccess && data.url) {
-                onUploadSuccess(`http://localhost:3000${data.url}`);
+            if (onUploadSuccess && url) {
+                onUploadSuccess(`http://localhost:3000${url}`);
             }
 
             setTimeout(() => setIsSuccess(false), 3000);
@@ -91,8 +91,30 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
             setIsUploading(false);
             setIsProcessing(false);
         }
-
     };
+
+    const pollForCompletion = async (videoID: string) => {
+        return new Promise<void>((resolve, reject) => {
+            const poll = async () => {
+                try {
+                    const response = await axios.get('http://localhost:3000/videos');
+                    const video = response.data.find((v: any) => v.id === videoID);
+
+                    if (video && video.status === 'Completed') {
+                        resolve();
+                    } else if (video && video.status === 'Failed') {
+                        reject(new Error('Transcoding failed on server'));
+                    } else {
+                        setTimeout(poll, 2000); // Poll every 2 seconds
+                    }
+                } catch (err) {
+                    reject(err);
+                }
+            };
+            poll();
+        });
+    };
+
 
 
     return (
