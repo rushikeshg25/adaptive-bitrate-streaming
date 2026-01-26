@@ -1,76 +1,67 @@
-# Adaptive Bitrate Streaming (ABR) Platform
+# Adaptive Bitrate Streaming (ABR) Platform Technical Documentation
 
-A high-performance video streaming platform built with **React (Vite)**, **Go (Fiber)**, and **FFmpeg**. This system implements a full end-to-end Adaptive Bitrate Streaming (ABR) pipeline, including chunked resumable uploads, background transcoding into HLS, and intelligent playback with `hls.js`.
+This document provides a technical overview and implementation guide for the Adaptive Bitrate Streaming platform. The system is designed to handle large video uploads, transcode them into multiple bitrate variants using HLS, and serve them via an adaptive web player.
 
-## 🚀 Key Features
+## System Architecture
 
-### 1. Robust Chunked Uploads
-Large video files (tested up to 500MB+) are split into **5MB chunks** in the browser.
-- **Sequential Uploads**: Chunks are sent one by one to ensure reliability.
-- **Real-time Feedback**: A beautiful progress bar tracks the upload status.
-- **Resilient**: Small chunks prevent server-side body limit timeouts and handle network jitters better.
+The platform is divided into a React frontend (Vite) and a Go backend (Fiber). It leverages FFmpeg for server-side video processing and HLS.js for client-side adaptive streaming.
 
-### 2. Multi-Quality HLS Transcoding (ABR)
-Once the upload is complete, the Go server merges the chunks and triggers a background **FFmpeg** pipeline to generate an HLS (HTTP Live Streaming) library:
-- **720p**: High quality (2800kbps)
-- **480p**: Standard quality (1400kbps)
-- **360p**: Low quality (800kbps)
-- **Master Playlist**: A `master.m3u8` entry point that allows the player to switch between qualities automatically.
+### 1. File Upload Pipeline (Chunked Uploads)
 
-### 3. Intelligent Video Player
-Built with `hls.js`, the custom video player provides a premium experience:
-- **Adaptive Bitrate Switching**: Automatically shifts to lower or higher quality based on the user's internet speed.
-- **Manual Quality Selection**: A "Streaming Quality" settings menu to lock in a specific resolution.
-- **Processing Awareness**: The UI polls the server for transcoding status and launches the player as soon as the video is ready.
+To handle large video files (e.g., 30MB or larger) without hitting server timeouts or memory limits, the platform uses a chunked upload protocol.
 
-## 🏗️ Technical Architecture
+- **Client-Side Slicing**: The browser uses the `File.slice()` API to split the video file into 5MB segments (Blobs).
+- **Sequential Upload**: Segments are uploaded sequentially to the `/api/upload/chunk` endpoint. This ensures that the server can store them in order and simplifies error handling and retry logic.
+- **Progress Tracking**: The frontend uses Axios's `onUploadProgress` hook to track the percentage of the current chunk's upload, calculating the overall percentage based on the number of completed chunks.
+- **Body Limit**: The Go Fiber server is configured with a `BodyLimit` of 100MB to comfortably handle these 5MB chunks (the default limit is 4MB).
 
-### Backend (Go + Fiber)
-Located in `/server`, the backend is modularized for scalability:
-- `main.go`: Entry point and route definitions.
-- `handlers/upload.go`: Management of multipart chunks, reassembly, and status polling.
-- `utils/video.go`: Integration with the system's FFmpeg binary for transcoding.
-- `utils/metadata.go`: Persistent JSON-based tracking of video processing states.
+### 2. File Reassembly and Transcoding
 
-### Frontend (React + Vite)
-Located in `/web`, using modern web technologies:
-- **Tailwind CSS**: For high-end, premium UI aesthetics.
-- **Lucide React**: For sleek, consistent iconography.
-- **Axios**: For granular upload progress tracking and API communication.
-- **HLS.js**: For standard-compliant HLS playback.
+Once all chunks are received, the client calls the `/api/upload/complete` endpoint.
 
-## 🛠️ Getting Started
+- **Reassembly**: The server reads the chunks from the temporary storage directory and writes them into a single `.mp4` file.
+- **Background Processing**: Transcoding is a CPU-intensive task. To avoid blocking the HTTP response, the server triggers the FFmpeg pipeline in a background goroutine.
+- **Metadata Persistence**: A record is created in `server/videos/metadata.json` with the status set to `Processing`. This allows the frontend to poll for completion.
 
-### Prerequisites
-- **FFmpeg**: Must be installed and available in your system's PATH.
-- **Go**: Version 1.20+ recommended.
-- **Node.js**: Version 18+ recommended.
+### 3. FFmpeg HLS Transcoding Engine
 
-### Installation & Run
-We've included a `Makefile` to simplify your workflow:
+The server invokes FFmpeg with a multi-variant HLS configuration. The command generates three distinct quality levels:
 
-```bash
-# Install all dependencies (Go & NPM)
-make install
+- **720p (High)**: 1280x720, 2800kbps bitrate cap.
+- **480p (Standard)**: 854x480, 1400kbps bitrate cap.
+- **360p (Low)**: 640x360, 800kbps bitrate cap.
 
-# Start both backend and frontend simultaneously
-make dev
-```
+**FFmpeg Command Breakdown**:
+- `-map 0:v:0 -map 0:a:0`: Maps the input video and audio streams for each output variant.
+- `-c:v libx264`: Encodes video using the H.264 codec.
+- `-var_stream_map`: Links specific video and audio streams to their respective HLS variant.
+- `-master_pl_name master.m3u8`: Generates a master playlist that acts as the entry point for the player.
+- `-f hls`: Specifies the HLS output format.
 
-The app will be available at `http://localhost:5173` (Frontend) and `http://localhost:3000` (Backend).
+### 4. Adaptive Playback (Client Side)
 
-## 📊 Transcoding Example
-The system uses the following FFmpeg configuration to generate the ABR manifest:
+The video player uses the `hls.js` library to perform bitrate switching.
 
-```bash
-ffmpeg -i input.mp4 \
-  -map 0:v:0 -map 0:a:0 -map 0:v:0 -map 0:a:0 -map 0:v:0 -map 0:a:0 \
-  -c:v libx264 -crf 22 -c:a aac -ar 48000 \
-  -filter:v:0 scale=w=640:h=360 -maxrate:v:0 800k -bufsize:v:0 1200k \
-  -filter:v:1 scale=w=854:h=480 -maxrate:v:1 1400k -bufsize:v:1 2100k \
-  -filter:v:2 scale=w=1280:h=720 -maxrate:v:2 2800k -bufsize:v:2 4200k \
-  -var_stream_map "v:0,a:0 v:1,a:1 v:2,a:2" \
-  -master_pl_name master.m3u8 \
-  -f hls -hls_time 10 -hls_playlist_type vod \
-  -hls_segment_filename "v%v/segment%03d.ts" "v%v/index.m3u8"
-```
+- **Master Playlist Consumption**: The player loads `master.m3u8`, which contains metadata about the available bitrates and resolutions.
+- **Automatic Bandwidth Detection**: HLS.js monitors the download speed of video segments. If the bandwidth drops, it automatically switches to a lower quality manifest (e.g., 360p) to prevent buffering.
+- **Manual Override**: The UI includes a settings menu that allows users to manually set the quality level. Setting the `currentLevel` to `-1` in HLS.js reverts to automatic adaptive switching.
+- **Status Polling**: Before playback begins, the frontend polls the `/api/videos` endpoint. It only initializes the player when the video status is marked as `Completed`.
+
+## Development and Deployment
+
+### Directory Structure
+- `/server`: Go backend application.
+- `/server/handlers`: Request handler logic.
+- `/server/utils`: Core utilities for video processing and metadata.
+- `/server/videos`: Final HLS output and metadata storage.
+- `/server/temp_chunks`: Temporary directory for upload segments.
+- `/web`: React frontend application.
+
+### Makefile Commands
+A Makefile is provided at the root for common tasks:
+- `make install`: Installs Go and NPM dependencies.
+- `make dev`: Launches both server and web applications in development mode.
+- `make clean`: Removes all temporary chunks and uploaded video data.
+
+## Server Configuration Notes
+The server serves static files from the `/videos` directory but uses an `/api` prefix for all REST endpoints to prevent route collisions with the generated HLS directory structure.
