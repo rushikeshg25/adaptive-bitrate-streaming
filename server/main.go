@@ -21,7 +21,8 @@ func main() {
 
 	// Initialize Fiber app
 	app := fiber.New(fiber.Config{
-		AppName: "Adaptive Bitrate Streaming API",
+		AppName:   "Adaptive Bitrate Streaming API",
+		BodyLimit: 100 * 1024 * 1024, // 100MB
 	})
 
 	// Middleware
