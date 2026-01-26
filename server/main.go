@@ -33,12 +33,12 @@ func main() {
 	app.Static("/videos", "./videos")
 
 	// Routes
-	app.Get("/health", handlers.HealthCheck)
-	app.Get("/videos", handlers.ListVideos)
-	app.Post("/upload/chunk", handlers.UploadChunk)
+	app.Get("/api/health", handlers.HealthCheck)
+	app.Get("/api/videos", handlers.ListVideos)
+	app.Post("/api/upload/chunk", handlers.UploadChunk)
 
-	app.Post("/upload/complete", handlers.CompleteUpload)
-	app.Post("/upload", handlers.LegacyUpload)
+	app.Post("/api/upload/complete", handlers.CompleteUpload)
+	app.Post("/api/upload", handlers.LegacyUpload)
 
 	// Start server
 	log.Fatal(app.Listen(":3000"))

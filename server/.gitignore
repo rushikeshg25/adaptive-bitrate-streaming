@@ -29,4 +29,6 @@ go.work.sum
 # OS
 .DS_Store
 
-./videos/*
+# Videos (Ignore everything except the metadata file)
+/server/videos/*
+!/server/videos/metadata.json

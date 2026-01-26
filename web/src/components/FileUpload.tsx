@@ -57,7 +57,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
                 formData.append('uploadId', uploadId);
                 formData.append('index', i.toString());
 
-                await axios.post('http://localhost:3000/upload/chunk', formData, {
+                await axios.post('http://localhost:3000/api/upload/chunk', formData, {
                     onUploadProgress: (progressEvent) => {
                         const chunkProgress = progressEvent.loaded / (progressEvent.total || (end - start));
                         const totalProgress = Math.round(((i + chunkProgress) / totalChunks) * 100);
@@ -68,7 +68,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
 
             // Start reassembly and background transcoding
             setIsProcessing(true);
-            const response = await axios.post('http://localhost:3000/upload/complete', {
+            const response = await axios.post('http://localhost:3000/api/upload/complete', {
                 uploadId,
                 filename: file.name,
                 total: totalChunks,
@@ -97,7 +97,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
         return new Promise<void>((resolve, reject) => {
             const poll = async () => {
                 try {
-                    const response = await axios.get('http://localhost:3000/videos');
+                    const response = await axios.get('http://localhost:3000/api/videos');
                     const video = response.data.find((v: any) => v.id === videoID);
 
                     if (video && video.status === 'Completed') {
