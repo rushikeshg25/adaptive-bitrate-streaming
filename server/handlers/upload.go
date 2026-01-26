@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"server/utils"
 
+	"time"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
@@ -17,6 +19,17 @@ func HealthCheck(c *fiber.Ctx) error {
 		"status":  "ok",
 		"message": "Server is running",
 	})
+}
+
+// ListVideos returns all uploaded videos metadata
+func ListVideos(c *fiber.Ctx) error {
+	videos, err := utils.GetAllMetadata()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Could not fetch videos",
+		})
+	}
+	return c.JSON(videos)
 }
 
 // UploadChunk handles uploading individual video chunks
@@ -106,24 +119,38 @@ func CompleteUpload(c *fiber.Ctx) error {
 	}
 	finalFile.Close()
 
+	// Create metadata record
+	metadata := utils.VideoMetadata{
+		ID:        videoID,
+		Filename:  payload.Filename,
+		Status:    "Processing",
+		CreatedAt: time.Now(),
+		URL:       fmt.Sprintf("/videos/%s/master.m3u8", videoID),
+	}
+	utils.SaveMetadata(metadata)
+
 	// Transcode to HLS in background
 	go func() {
 		log.Printf("Starting background transcoding for video %s", videoID)
 		if err := utils.TranscodeToHLS(tempMP4Path, videoDir); err != nil {
 			log.Printf("Transcoding failed for video %s: %v", videoID, err)
+			metadata.Status = "Failed"
+			utils.SaveMetadata(metadata)
 			return
 		}
 		log.Printf("Successfully transcoded video %s", videoID)
+		metadata.Status = "Completed"
+		utils.SaveMetadata(metadata)
 	}()
 
 	// Cleanup chunks
 	os.RemoveAll(uploadDir)
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message":  "Video processed successfully",
+		"message":  "Video upload success, transcoding started",
 		"videoID":  videoID,
 		"filename": payload.Filename,
-		"url":      fmt.Sprintf("/videos/%s/master.m3u8", videoID),
+		"url":      metadata.URL,
 	})
 }
 

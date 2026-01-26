@@ -34,7 +34,9 @@ func main() {
 
 	// Routes
 	app.Get("/health", handlers.HealthCheck)
+	app.Get("/videos", handlers.ListVideos)
 	app.Post("/upload/chunk", handlers.UploadChunk)
+
 	app.Post("/upload/complete", handlers.CompleteUpload)
 	app.Post("/upload", handlers.LegacyUpload)
 
