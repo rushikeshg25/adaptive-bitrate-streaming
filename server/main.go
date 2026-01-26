@@ -35,6 +35,11 @@ func main() {
 	// Static files - serve uploaded videos
 	app.Static("/videos", "./videos")
 
+	// Ensure temp directory exists
+	if _, err := os.Stat("./temp_chunks"); os.IsNotExist(err) {
+		os.Mkdir("./temp_chunks", 0755)
+	}
+
 	// Health endpoint
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -43,37 +48,102 @@ func main() {
 		})
 	})
 
-	// Upload endpoint
-	app.Post("/upload", func(c *fiber.Ctx) error {
-		// Get file from form
-		file, err := c.FormFile("video")
+	// Upload Chunk endpoint
+	app.Post("/upload/chunk", func(c *fiber.Ctx) error {
+		uploadID := c.FormValue("uploadId")
+		chunkIndex := c.FormValue("index")
+
+		if uploadID == "" || chunkIndex == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Missing uploadId or index",
+			})
+		}
+
+		file, err := c.FormFile("chunk")
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "Could not get uploaded file",
+				"error": "Could not get chunk",
 			})
 		}
 
-		// Generate unique ID and preserve extension
-		id := uuid.New().String()
-		ext := filepath.Ext(file.Filename)
-		newFilename := fmt.Sprintf("%s%s", id, ext)
-		savePath := filepath.Join("./videos", newFilename)
+		// Create directory for this upload
+		uploadDir := filepath.Join("./temp_chunks", uploadID)
+		if _, err := os.Stat(uploadDir); os.IsNotExist(err) {
+			os.Mkdir(uploadDir, 0755)
+		}
 
-		// Save file to disk
-		if err := c.SaveFile(file, savePath); err != nil {
+		// Save chunk
+		chunkPath := filepath.Join(uploadDir, chunkIndex)
+		if err := c.SaveFile(file, chunkPath); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "Could not save file",
+				"error": "Could not save chunk",
 			})
 		}
 
-		//TODO:Process the File here
-		//FFMPEG
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"message": "Chunk uploaded successfully",
+		})
+	})
+
+	// Complete Upload endpoint
+	app.Post("/upload/complete", func(c *fiber.Ctx) error {
+		var payload struct {
+			UploadID string `json:"uploadId"`
+			Filename string `json:"filename"`
+			Total    int    `json:"total"`
+		}
+
+		if err := c.BodyParser(&payload); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid payload",
+			})
+		}
+
+		uploadDir := filepath.Join("./temp_chunks", payload.UploadID)
+		ext := filepath.Ext(payload.Filename)
+		newFilename := fmt.Sprintf("%s%s", uuid.New().String(), ext)
+		finalPath := filepath.Join("./videos", newFilename)
+
+		// Create final file
+		finalFile, err := os.Create(finalPath)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Could not create final file",
+			})
+		}
+		defer finalFile.Close()
+
+		// Merge chunks in order
+		for i := 0; i < payload.Total; i++ {
+			chunkPath := filepath.Join(uploadDir, fmt.Sprintf("%d", i))
+			chunkBytes, err := os.ReadFile(chunkPath)
+			if err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"error": fmt.Sprintf("Missing chunk %d", i),
+				})
+			}
+
+			if _, err := finalFile.Write(chunkBytes); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"error": "Failed to write chunk to final file",
+				})
+			}
+		}
+
+		// Cleanup
+		os.RemoveAll(uploadDir)
 
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-			"message":  "File uploaded successfully",
-			"id":       id,
+			"message":  "File reassembled successfully",
 			"filename": newFilename,
 			"url":      fmt.Sprintf("/videos/%s", newFilename),
+		})
+	})
+
+	// Legacy Upload endpoint (for backward compatibility if needed, or remove)
+	app.Post("/upload", func(c *fiber.Ctx) error {
+		return c.Status(fiber.StatusGone).JSON(fiber.Map{
+			"error": "Use chunked upload instead",
 		})
 	})
 
