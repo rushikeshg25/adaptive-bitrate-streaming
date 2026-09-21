@@ -1,51 +1,45 @@
 package utils
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
-func TranscodeToHLS(inputPath string, outputDir string) error {
-	// Ensure variant directories exist for FFmpeg
-	for _, v := range []string{"v0", "v1", "v2"} {
-		os.MkdirAll(filepath.Join(outputDir, v), 0755)
+func TranscodeToHLS(input, dir string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return TranscodeToHLSContext(ctx, input, dir)
+}
+func TranscodeToHLSContext(ctx context.Context, input, dir string) error {
+	for i := 0; i < 3; i++ {
+		if e := os.MkdirAll(filepath.Join(dir, fmt.Sprintf("v%d", i)), 0700); e != nil {
+			return e
+		}
 	}
-
-	// Create original FFmpeg command for ABR HLS
-
-	// We generate 3 qualities: 360p, 480p, 720p
-	cmd := exec.Command("ffmpeg",
-		"-i", inputPath,
-		// Map streams for each variant
-		"-map", "0:v:0", "-map", "0:a:0",
-		"-map", "0:v:0", "-map", "0:a:0",
-		"-map", "0:v:0", "-map", "0:a:0",
-		// Video and Audio codec
-		"-c:v", "libx264", "-crf", "22", "-c:a", "aac", "-ar", "48000",
-		// 360p variant
-		"-filter:v:0", "scale=w=640:h=360", "-maxrate:v:0", "800k", "-bufsize:v:0", "1200k",
-		// 480p variant
-		"-filter:v:1", "scale=w=854:h=480", "-maxrate:v:1", "1400k", "-bufsize:v:1", "2100k",
-		// 720p variant
-		"-filter:v:2", "scale=w=1280:h=720", "-maxrate:v:2", "2800k", "-bufsize:v:2", "4200k",
-		// Map descriptors to variant streams
-		"-var_stream_map", "v:0,a:0 v:1,a:1 v:2,a:2",
-		// HLS settings
-		"-master_pl_name", "master.m3u8",
-		"-f", "hls",
-		"-hls_time", "10",
-		"-hls_playlist_type", "vod",
-		"-hls_segment_filename", filepath.Join(outputDir, "v%v/segment%03d.ts"),
-		filepath.Join(outputDir, "v%v/index.m3u8"),
-	)
-
-	// Run command and capture output for debugging
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("ffmpeg error: %v, output: %s", err, string(output))
+	probe, e := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-protocol_whitelist", "file,pipe", "-format_whitelist", "mov,matroska,webm,avi,mpegts", "-select_streams", "a:0", "-show_entries", "stream=index", "-of", "csv=p=0", input).Output()
+	if e != nil {
+		return fmt.Errorf("probe input: %w", e)
 	}
-
+	audio := len(strings.TrimSpace(string(probe))) > 0
+	args := []string{"-nostdin", "-y", "-protocol_whitelist", "file,pipe", "-format_whitelist", "mov,matroska,webm,avi,mpegts", "-i", input}
+	variants := []string{}
+	for i := 0; i < 3; i++ {
+		args = append(args, "-map", "0:v:0")
+		variant := fmt.Sprintf("v:%d", i)
+		if audio {
+			args = append(args, "-map", "0:a:0")
+			variant += fmt.Sprintf(",a:%d", i)
+		}
+		variants = append(variants, variant)
+	}
+	args = append(args, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "48000", "-g", "48", "-sc_threshold", "0", "-filter:v:0", "scale=640:360", "-maxrate:v:0", "800k", "-bufsize:v:0", "1200k", "-filter:v:1", "scale=854:480", "-maxrate:v:1", "1400k", "-bufsize:v:1", "2100k", "-filter:v:2", "scale=1280:720", "-maxrate:v:2", "2800k", "-bufsize:v:2", "4200k", "-var_stream_map", strings.Join(variants, " "), "-master_pl_name", "master.m3u8", "-f", "hls", "-hls_time", "2", "-hls_playlist_type", "vod", "-hls_segment_filename", filepath.Join(dir, "v%v/segment%03d.ts"), filepath.Join(dir, "v%v/index.m3u8"))
+	if b, e := exec.CommandContext(ctx, "ffmpeg", args...).CombinedOutput(); e != nil {
+		return fmt.Errorf("ffmpeg: %w: %.2000s", e, b)
+	}
 	return nil
 }

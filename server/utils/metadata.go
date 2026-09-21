@@ -3,6 +3,7 @@ package utils
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -15,25 +16,31 @@ type VideoMetadata struct {
 	URL       string    `json:"url"`
 }
 
-var (
-	metadataFile = "./videos/metadata.json"
-	mu           sync.Mutex
-)
+var metadataFile = "./videos/metadata.json"
+var mu sync.Mutex
 
+func readMetadata() ([]VideoMetadata, error) {
+	b, e := os.ReadFile(metadataFile)
+	if os.IsNotExist(e) {
+		return []VideoMetadata{}, nil
+	}
+	if e != nil {
+		return nil, e
+	}
+	var v []VideoMetadata
+	e = json.Unmarshal(b, &v)
+	return v, e
+}
 func SaveMetadata(v VideoMetadata) error {
 	mu.Lock()
 	defer mu.Unlock()
-
-	var videos []VideoMetadata
-	data, err := os.ReadFile(metadataFile)
-	if err == nil {
-		json.Unmarshal(data, &videos)
+	videos, e := readMetadata()
+	if e != nil {
+		return e
 	}
-
-	// Update or Append
 	found := false
-	for i, video := range videos {
-		if video.ID == v.ID {
+	for i := range videos {
+		if videos[i].ID == v.ID {
 			videos[i] = v
 			found = true
 			break
@@ -42,23 +49,54 @@ func SaveMetadata(v VideoMetadata) error {
 	if !found {
 		videos = append(videos, v)
 	}
-
-	newData, _ := json.MarshalIndent(videos, "", "  ")
-	return os.WriteFile(metadataFile, newData, 0644)
-}
-
-func GetAllMetadata() ([]VideoMetadata, error) {
-	mu.Lock()
-	defer mu.Unlock()
-
-	var videos []VideoMetadata
-	data, err := os.ReadFile(metadataFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []VideoMetadata{}, nil
-		}
-		return nil, err
+	b, e := json.MarshalIndent(videos, "", "  ")
+	if e != nil {
+		return e
 	}
-	err = json.Unmarshal(data, &videos)
-	return videos, err
+	dir := filepath.Dir(metadataFile)
+	if e = os.MkdirAll(dir, 0700); e != nil {
+		return e
+	}
+	f, e := os.CreateTemp(dir, ".metadata-*")
+	if e != nil {
+		return e
+	}
+	name := f.Name()
+	defer os.Remove(name)
+	if _, e = f.Write(b); e != nil {
+		f.Close()
+		return e
+	}
+	if e = f.Sync(); e != nil {
+		f.Close()
+		return e
+	}
+	if e = f.Close(); e != nil {
+		return e
+	}
+	if e = os.Rename(name, metadataFile); e != nil {
+		return e
+	}
+	d, e := os.Open(dir)
+	if e != nil {
+		return e
+	}
+	defer d.Close()
+	return d.Sync()
+}
+func GetAllMetadata() ([]VideoMetadata, error) { mu.Lock(); defer mu.Unlock(); return readMetadata() }
+func RecoverProcessing() error {
+	videos, e := GetAllMetadata()
+	if e != nil {
+		return e
+	}
+	for _, v := range videos {
+		if v.Status == "Processing" {
+			v.Status = "Failed"
+			if e = SaveMetadata(v); e != nil {
+				return e
+			}
+		}
+	}
+	return nil
 }
