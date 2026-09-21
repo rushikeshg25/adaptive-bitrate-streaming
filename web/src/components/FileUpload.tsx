@@ -64,6 +64,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
 
                 await axios.post('http://localhost:3000/api/upload/chunk', formData, {
                     signal: controller.signal,
+                    timeout: 60000,
                     onUploadProgress: (progressEvent) => {
                         const chunkProgress = progressEvent.loaded / (progressEvent.total || (end - start));
                         const totalProgress = Math.round(((i + chunkProgress) / totalChunks) * 100);
@@ -74,11 +75,11 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
 
             // Start reassembly and background transcoding
             setIsProcessing(true);
-            const response = await axios.post('http://localhost:3000/api/upload/complete', {
+            const response = await completeWithRetry({
                 uploadId,
                 filename: file.name,
                 total: totalChunks,
-            }, { signal: controller.signal });
+            }, controller.signal);
 
             const { videoID, url } = response.data;
 
@@ -100,14 +101,27 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
         }
     };
 
+    const completeWithRetry = async (payload: { uploadId: string; filename: string; total: number }, signal: AbortSignal) => {
+        const deadline = Date.now() + 180000;
+        while (Date.now() < deadline) {
+            try {
+                return await axios.post<{ videoID: string; url: string }>('http://localhost:3000/api/upload/complete', payload, { signal, timeout: Math.max(1, Math.min(30000, deadline - Date.now())) });
+            } catch (err) {
+                if (!axios.isAxiosError(err) || err.response?.status !== 503 || signal.aborted) throw err;
+                await new Promise(resolve => setTimeout(resolve, Math.max(0, Math.min(2000, deadline - Date.now()))));
+            }
+        }
+        throw new Error('The processor is busy. Please try again later.');
+    };
+
     const pollForCompletion = async (videoID: string, signal: AbortSignal) => {
         const deadline = Date.now() + 180000;
         while (Date.now() < deadline) {
-            const response = await axios.get<{ id: string; status: string }[]>('http://localhost:3000/api/videos', { signal });
+            const response = await axios.get<{ id: string; status: string }[]>('http://localhost:3000/api/videos', { signal, timeout: Math.max(1, Math.min(15000, deadline - Date.now())) });
             const video = response.data.find(v => v.id === videoID);
             if (video?.status === 'Completed') return;
             if (video?.status === 'Failed') throw new Error('The video could not be processed. Try another video.');
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise(resolve => setTimeout(resolve, Math.max(0, Math.min(2000, deadline - Date.now()))));
         }
         throw new Error('Processing is taking too long. Please check the video list later.');
     };

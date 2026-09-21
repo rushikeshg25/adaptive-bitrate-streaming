@@ -36,7 +36,7 @@ func main() {
 	}))
 
 	// Static files - serve uploaded videos
-	app.Static("/videos", "./videos")
+	app.Get("/videos/*", handlers.ServeVideo)
 
 	// Routes
 	app.Get("/api/health", handlers.HealthCheck)

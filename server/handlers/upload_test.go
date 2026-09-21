@@ -105,3 +105,36 @@ func TestCompleteAssemblyAndReceipt(t *testing.T) {
 		t.Fatal(videos, e)
 	}
 }
+
+func TestMediaRouteHidesInputsAndProcessingOutput(t *testing.T) {
+	dir := t.TempDir()
+	old, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(old)
+	id := "11111111-1111-1111-1111-111111111111"
+	os.MkdirAll(filepath.Join("videos", id), 0700)
+	os.WriteFile(filepath.Join("videos", id, "master.m3u8"), []byte("#EXTM3U"), 0600)
+	v := utils.VideoMetadata{ID: id, Status: "Processing"}
+	if e := utils.SaveMetadata(v); e != nil {
+		t.Fatal(e)
+	}
+	app := fiber.New()
+	app.Get("/videos/*", ServeVideo)
+	check := func(path string, want int) {
+		t.Helper()
+		resp, e := app.Test(httptest.NewRequest("GET", path, nil))
+		if e != nil {
+			t.Fatal(e)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Fatalf("%s: %d", path, resp.StatusCode)
+		}
+	}
+	check("/videos/"+id+"/master.m3u8", 404)
+	v.Status = "Completed"
+	utils.SaveMetadata(v)
+	check("/videos/"+id+"/master.m3u8", 200)
+	check("/videos/"+id+"/input", 404)
+	check("/videos/metadata.json", 404)
+}

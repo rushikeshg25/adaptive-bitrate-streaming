@@ -178,3 +178,33 @@ func CompleteUpload(c *fiber.Ctx) error {
 	return c.Status(201).JSON(result)
 }
 func LegacyUpload(c *fiber.Ctx) error { return fiber.NewError(410, "use chunked upload") }
+
+var mediaPath = regexp.MustCompile(`^/videos/([a-f0-9-]{36})/(master\.m3u8|v[0-2]/(index\.m3u8|segment[0-9]+\.ts))$`)
+
+// ServeVideo exposes only the finished HLS output, never input or metadata files.
+func ServeVideo(c *fiber.Ctx) error {
+	parts := mediaPath.FindStringSubmatch(c.Path())
+	if parts == nil {
+		return fiber.ErrNotFound
+	}
+	videos, e := utils.GetAllMetadata()
+	if e != nil {
+		return fiber.NewError(500, "metadata unavailable")
+	}
+	ready := false
+	for _, v := range videos {
+		if v.ID == parts[1] && v.Status == "Completed" {
+			ready = true
+			break
+		}
+	}
+	if !ready {
+		return fiber.ErrNotFound
+	}
+	if filepath.Ext(parts[2]) == ".m3u8" {
+		c.Set("Content-Type", "application/vnd.apple.mpegurl")
+	} else {
+		c.Set("Content-Type", "video/mp2t")
+	}
+	return c.SendFile(filepath.Join("videos", parts[1], parts[2]))
+}
