@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { Upload, FileVideo, CheckCircle2, Loader2 } from 'lucide-react';
 
@@ -10,6 +10,8 @@ interface FileUploadProps {
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
 
 const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
+    const request = useRef<AbortController | null>(null);
+    useEffect(() => () => request.current?.abort(), []);
     const [isDragging, setIsDragging] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
@@ -38,6 +40,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
     };
 
     const handleFileUpload = async (file: File) => {
+        if (request.current) return;
+        if (file.size === 0 || file.size > CHUNK_SIZE * 200) { setError("Choose a video between 1 byte and 1000 MiB."); return; }
+        const controller = new AbortController(); request.current = controller;
         setIsUploading(true);
         setError(null);
         setIsSuccess(false);
@@ -58,6 +63,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
                 formData.append('index', i.toString());
 
                 await axios.post('http://localhost:3000/api/upload/chunk', formData, {
+                    signal: controller.signal,
                     onUploadProgress: (progressEvent) => {
                         const chunkProgress = progressEvent.loaded / (progressEvent.total || (end - start));
                         const totalProgress = Math.round(((i + chunkProgress) / totalChunks) * 100);
@@ -72,49 +78,39 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
                 uploadId,
                 filename: file.name,
                 total: totalChunks,
-            });
+            }, { signal: controller.signal });
 
             const { videoID, url } = response.data;
 
             // Poll for transcoding completion
-            await pollForCompletion(videoID);
+            await pollForCompletion(videoID, controller.signal);
 
             setIsSuccess(true);
             if (onUploadSuccess && url) {
                 onUploadSuccess(`http://localhost:3000${url}`);
             }
 
-            setTimeout(() => setIsSuccess(false), 3000);
+            
         } catch (err) {
-            setError(axios.isAxiosError(err) ? err.response?.data?.error || err.message : 'An unknown error occurred');
+            if (!controller.signal.aborted) setError(axios.isAxiosError(err) ? (typeof err.response?.data === 'string' ? err.response.data : err.response?.data?.error) || err.message : err instanceof Error ? err.message : 'Upload failed');
         } finally {
+            request.current = null;
             setIsUploading(false);
             setIsProcessing(false);
         }
     };
 
-    const pollForCompletion = async (videoID: string) => {
-        return new Promise<void>((resolve, reject) => {
-            const poll = async () => {
-                try {
-                    const response = await axios.get('http://localhost:3000/api/videos');
-                    const video = response.data.find((v: any) => v.id === videoID);
-
-                    if (video && video.status === 'Completed') {
-                        resolve();
-                    } else if (video && video.status === 'Failed') {
-                        reject(new Error('Transcoding failed on server'));
-                    } else {
-                        setTimeout(poll, 2000); // Poll every 2 seconds
-                    }
-                } catch (err) {
-                    reject(err);
-                }
-            };
-            poll();
-        });
+    const pollForCompletion = async (videoID: string, signal: AbortSignal) => {
+        const deadline = Date.now() + 180000;
+        while (Date.now() < deadline) {
+            const response = await axios.get<{ id: string; status: string }[]>('http://localhost:3000/api/videos', { signal });
+            const video = response.data.find(v => v.id === videoID);
+            if (video?.status === 'Completed') return;
+            if (video?.status === 'Failed') throw new Error('The video could not be processed. Try another video.');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        throw new Error('Processing is taking too long. Please check the video list later.');
     };
-
 
 
     return (
