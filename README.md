@@ -1,67 +1,34 @@
-# Adaptive Bitrate Streaming (ABR) Platform Technical Documentation
+# Adaptive bitrate streaming v1
 
-This document provides a technical overview and implementation guide for the Adaptive Bitrate Streaming platform. The system is designed to handle large video uploads, transcode them into multiple bitrate variants using HLS, and serve them via an adaptive web player.
+A Go/Fiber upload server and React/HLS.js player. Requires FFmpeg and ffprobe with libx264/AAC support.
 
-## System Architecture
+```sh
+cd server && go run .
+# In another terminal:
+cd web && npm ci && npm run dev
+```
 
-The platform is divided into a React frontend (Vite) and a Go backend (Fiber). It leverages FFmpeg for server-side video processing and HLS.js for client-side adaptive streaming.
+The API listens on port 3000. The client uploads sequential 5 MiB chunks, requests completion, polls processing status and opens the adaptive master playlist. It supports automatic quality selection and explicit 360p/480p/720p selection.
 
-### 1. File Upload Pipeline (Chunked Uploads)
+## Upload protocol
 
-To handle large video files (e.g., 30MB or larger) without hitting server timeouts or memory limits, the platform uses a chunked upload protocol.
+POST `/api/upload/chunk` accepts multipart `uploadId`, canonical integer `index` (0..199), and `chunk` (1 byte..5 MiB). IDs contain 1..64 ASCII letters/digits/underscore/hyphen; the client uses random UUIDs. Chunk publication is atomic and an uncompleted chunk may be retried at its index.
 
-- **Client-Side Slicing**: The browser uses the `File.slice()` API to split the video file into 5MB segments (Blobs).
-- **Sequential Upload**: Segments are uploaded sequentially to the `/api/upload/chunk` endpoint. This ensures that the server can store them in order and simplifies error handling and retry logic.
-- **Progress Tracking**: The frontend uses Axios's `onUploadProgress` hook to track the percentage of the current chunk's upload, calculating the overall percentage based on the number of completed chunks.
-- **Body Limit**: The Go Fiber server is configured with a `BodyLimit` of 100MB to comfortably handle these 5MB chunks (the default limit is 4MB).
+POST `/api/upload/complete` takes `{ "uploadId": "...", "filename": "clip.mp4", "total": 3 }`. Total must be 1..200, all numbered chunks must exist, and the filename is a display label. Chunks are streamed into an isolated input file. One transcode runs at a time; busy completion returns 503 and may be retried. Successful completion requests leave a small receipt so retries return the same video ID. Uploaded chunks are then removed.
 
-### 2. File Reassembly and Transcoding
+GET `/api/videos` returns metadata with Processing, Completed or Failed states. Metadata updates use file sync, atomic replacement and directory sync. Corrupt metadata is reported instead of overwritten. Processing jobs found at startup become Failed. SIGINT/SIGTERM shuts down admission and cancels workers. Chunk uploads and completion receipts are not a crash-safe transaction; after a process/disk failure the user may need to start a new upload.
 
-Once all chunks are received, the client calls the `/api/upload/complete` endpoint.
+## Output and limits
 
-- **Reassembly**: The server reads the chunks from the temporary storage directory and writes them into a single `.mp4` file.
-- **Background Processing**: Transcoding is a CPU-intensive task. To avoid blocking the HTTP response, the server triggers the FFmpeg pipeline in a background goroutine.
-- **Metadata Persistence**: A record is created in `server/videos/metadata.json` with the status set to `Processing`. This allows the frontend to poll for completion.
+FFmpeg/ffprobe accept supported video containers with a two-minute processing deadline. Silent and audio-bearing videos are supported. Output contains three H.264 variants (640x360, 854x480, 1280x720), plus AAC when the input has audio. The server validates each finished variant and its segments before atomically publishing an explicit master playlist. This also handles FFmpeg versions that produce empty master playlists for short silent clips.
 
-### 3. FFmpeg HLS Transcoding Engine
+The client polls for at most three minutes and cancels requests on unmount. Uploads are bounded to 200 chunks (1000 MiB). Original assembled inputs are deleted after processing. Abandoned chunks, completion receipts and finished videos require operator cleanup. V1 is a local, single-process demo without authentication, distributed workers or storage quotas; use trusted uploads. Scaling preserves the input display aspect ratio through sample aspect ratio metadata.
 
-The server invokes FFmpeg with a multi-variant HLS configuration. The command generates three distinct quality levels:
+## Verification
 
-- **720p (High)**: 1280x720, 2800kbps bitrate cap.
-- **480p (Standard)**: 854x480, 1400kbps bitrate cap.
-- **360p (Low)**: 640x360, 800kbps bitrate cap.
+```sh
+cd server && go test -race ./...
+cd ../web && npm run build && npm run lint
+```
 
-**FFmpeg Command Breakdown**:
-- `-map 0:v:0 -map 0:a:0`: Maps the input video and audio streams for each output variant.
-- `-c:v libx264`: Encodes video using the H.264 codec.
-- `-var_stream_map`: Links specific video and audio streams to their respective HLS variant.
-- `-master_pl_name master.m3u8`: Generates a master playlist that acts as the entry point for the player.
-- `-f hls`: Specifies the HLS output format.
-
-### 4. Adaptive Playback (Client Side)
-
-The video player uses the `hls.js` library to perform bitrate switching.
-
-- **Master Playlist Consumption**: The player loads `master.m3u8`, which contains metadata about the available bitrates and resolutions.
-- **Automatic Bandwidth Detection**: HLS.js monitors the download speed of video segments. If the bandwidth drops, it automatically switches to a lower quality manifest (e.g., 360p) to prevent buffering.
-- **Manual Override**: The UI includes a settings menu that allows users to manually set the quality level. Setting the `currentLevel` to `-1` in HLS.js reverts to automatic adaptive switching.
-- **Status Polling**: Before playback begins, the frontend polls the `/api/videos` endpoint. It only initializes the player when the video status is marked as `Completed`.
-
-## Development and Deployment
-
-### Directory Structure
-- `/server`: Go backend application.
-- `/server/handlers`: Request handler logic.
-- `/server/utils`: Core utilities for video processing and metadata.
-- `/server/videos`: Final HLS output and metadata storage.
-- `/server/temp_chunks`: Temporary directory for upload segments.
-- `/web`: React frontend application.
-
-### Makefile Commands
-A Makefile is provided at the root for common tasks:
-- `make install`: Installs Go and NPM dependencies.
-- `make dev`: Launches both server and web applications in development mode.
-- `make clean`: Removes all temporary chunks and uploaded video data.
-
-## Server Configuration Notes
-The server serves static files from the `/videos` directory but uses an `/api` prefix for all REST endpoints to prevent route collisions with the generated HLS directory structure.
+Tests cover unsafe IDs, missing chunks, idempotent completion, exact assembly, corrupt/interrupted metadata and real FFmpeg generation of all three variants. Browser playback across every platform has not been certified.
