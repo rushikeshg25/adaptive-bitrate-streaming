@@ -43,7 +43,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
         setIsSuccess(false);
         setProgress(0);
 
-        const uploadId = Math.random().toString(36).substring(7);
+        const uploadId = crypto.randomUUID();
         const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
         try {

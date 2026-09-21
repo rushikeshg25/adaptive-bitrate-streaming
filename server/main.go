@@ -3,7 +3,10 @@ package main
 import (
 	"log"
 	"os"
+	"os/signal"
 	"server/handlers"
+	"server/utils"
+	"syscall"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -15,10 +18,13 @@ func main() {
 	// Ensure necessary directories exist
 	setupDirectories()
 
+	if err := utils.RecoverProcessing(); err != nil {
+		log.Fatal(err)
+	}
 	// Initialize Fiber app
 	app := fiber.New(fiber.Config{
 		AppName:   "Adaptive Bitrate Streaming API",
-		BodyLimit: 100 * 1024 * 1024, // 100MB
+		BodyLimit: 6 * 1024 * 1024, // 100MB
 	})
 
 	// Middleware
@@ -41,7 +47,13 @@ func main() {
 	app.Post("/api/upload", handlers.LegacyUpload)
 
 	// Start server
-	log.Fatal(app.Listen(":3000"))
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	go func() { <-signals; _ = app.Shutdown(); handlers.StopProcessing() }()
+	if err := app.Listen(":3000"); err != nil {
+		log.Print(err)
+	}
+	handlers.StopProcessing()
 }
 
 func setupDirectories() {
