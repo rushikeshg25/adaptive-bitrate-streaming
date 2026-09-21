@@ -91,7 +91,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
                 onUploadSuccess(`http://localhost:3000${url}`);
             }
 
-            
+
         } catch (err) {
             if (!controller.signal.aborted) setError(axios.isAxiosError(err) ? (typeof err.response?.data === 'string' ? err.response.data : err.response?.data?.error) || err.message : err instanceof Error ? err.message : 'Upload failed');
         } finally {

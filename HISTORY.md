@@ -68,3 +68,11 @@ The v1 contract made failure behavior, lifecycle semantics and executable verifi
 ## Open questions
 
 No production deployment or long-running operational validation was performed as part of this delivery.
+
+## Documentation read-through follow-up
+
+The guide read-through identified unbounded HTTP calls inside otherwise bounded polling and an overly broad static media route. [ed12de7](https://github.com/rushikeshg25/adaptive-bitrate-streaming/commit/ed12de7) adds request timeouts, retries for busy completion and completed-media-only serving. Server race tests and client build/lint were rerun after this change.
+
+## 2026-09-21: Maintainer project guide
+
+Added the six-file [project guide](docs/project-guide/README.md), tracing architecture, runtime flows, source structure, dependencies and decisions against the v1 code. Relative paths, source/heading anchors and Mermaid syntax were checked. The guide distinguishes observed behavior from inferred rationale and records remaining limitations.
